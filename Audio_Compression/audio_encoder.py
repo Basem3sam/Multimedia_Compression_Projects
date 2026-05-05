@@ -93,7 +93,7 @@ def run_pipeline(params, log, progress, done):
             # Add noise scaled to signal amplitude so it's always visible
             sig_std = np.std(clean_signal) if np.std(clean_signal) > 0 else 1.0
             noise   = np.random.normal(0, noise_level * sig_std, clean_signal.shape)
-            silence = np.zeros(fs // 2)   # 0.5s silence appended
+            silence = np.zeros(fs * 5)   # 5s silence appended
 
             noisy_signal       = np.concatenate((clean_signal + noise, silence))
             clean_with_silence = np.concatenate((clean_signal, silence))
@@ -331,4 +331,4 @@ def run_pipeline(params, log, progress, done):
         "source_label":      source_label,
     }
 
-    done(data)
+    done(data);
