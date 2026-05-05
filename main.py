@@ -1,8 +1,9 @@
 import os
 import threading
+import cv2
 
 import tkinter as tk
-from tkinter import ttk, filedialog
+from tkinter import ttk, filedialog, messagebox
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -35,7 +36,6 @@ def run_async(func, params, log, progress, done, root):
 def draw_figure(container, fig):
     for widget in container.winfo_children():
         widget.destroy()
-
     canvas = FigureCanvasTkAgg(fig, container)
     canvas.draw()
     canvas.get_tk_widget().pack(fill="both", expand=True)
@@ -56,55 +56,120 @@ class AudioTab(ttk.Frame):
         right = ttk.Notebook(self)
         right.pack(side="right", fill="both", expand=True)
 
-        self.wave_tab  = ttk.Frame(right)
-        self.spec_tab  = ttk.Frame(right)
-        self.stats_tab = ttk.Frame(right)
+        self.wave_tab   = ttk.Frame(right)
+        self.zoom_tab   = ttk.Frame(right)
+        self.spec_tab   = ttk.Frame(right)
+        self.stats_tab  = ttk.Frame(right)
 
         right.add(self.wave_tab,  text="Waveforms")
+        right.add(self.zoom_tab,  text="🔍 Zoomed Differences")
         right.add(self.spec_tab,  text="Spectrogram")
         right.add(self.stats_tab, text="Statistics")
 
+        # ── Audio Source ────────────────────────────
+        ttk.Label(left, text="── Audio Source ──", font=("Arial", 9, "bold")).pack(anchor="w", pady=(0, 4))
+
+        self.use_file = tk.BooleanVar(value=False)
+        ttk.Checkbutton(
+            left,
+            text="Use my own audio file (WAV)",
+            variable=self.use_file,
+            command=self._toggle_source,
+        ).pack(anchor="w")
+
+        # File picker (hidden by default)
+        self.file_frame = ttk.Frame(left)
+        self.file_frame.pack(fill="x", pady=2)
+
+        self.audio_file = tk.StringVar()
+        self.file_entry = ttk.Entry(self.file_frame, textvariable=self.audio_file, state="disabled", width=22)
+        self.file_entry.pack(side="left", fill="x", expand=True)
+        self.browse_btn = ttk.Button(self.file_frame, text="Browse…", command=self._pick_file, state="disabled")
+        self.browse_btn.pack(side="left", padx=(4, 0))
+
+        ttk.Separator(left, orient="horizontal").pack(fill="x", pady=8)
+
+        # ── Synthetic signal settings ────────────────
+        ttk.Label(left, text="── Synthetic Signal Settings ──", font=("Arial", 9, "bold")).pack(anchor="w")
+        ttk.Label(left, text="(used only when no file is loaded)", foreground="gray").pack(anchor="w")
+
         self.frequency = tk.DoubleVar(value=440)
-        self.noise     = tk.DoubleVar(value=0.5)
         self.duration  = tk.DoubleVar(value=1.0)
-        self.bits      = tk.IntVar(value=16)
 
-        ttk.Label(left, text="Frequency").pack(anchor="w")
-        ttk.Spinbox(left, from_=100, to=5000, textvariable=self.frequency).pack(fill="x")
+        ttk.Label(left, text="Frequency (Hz)").pack(anchor="w", pady=(6, 0))
+        self.freq_spin = ttk.Spinbox(left, from_=100, to=5000, textvariable=self.frequency)
+        self.freq_spin.pack(fill="x")
 
-        ttk.Label(left, text="Noise Level").pack(anchor="w")
-        ttk.Spinbox(left, from_=0, to=2, increment=0.1, textvariable=self.noise).pack(fill="x")
+        ttk.Label(left, text="Duration (s)").pack(anchor="w", pady=(6, 0))
+        self.dur_spin = ttk.Spinbox(left, from_=0.5, to=10, increment=0.5, textvariable=self.duration)
+        self.dur_spin.pack(fill="x")
 
-        ttk.Label(left, text="Duration").pack(anchor="w")
-        ttk.Spinbox(left, from_=0.5, to=5, increment=0.5, textvariable=self.duration).pack(fill="x")
+        ttk.Separator(left, orient="horizontal").pack(fill="x", pady=8)
 
-        ttk.Label(left, text="Quantization Levels").pack(anchor="w")
+        # ── Compression settings ─────────────────────
+        ttk.Label(left, text="── Compression Settings ──", font=("Arial", 9, "bold")).pack(anchor="w")
+
+        self.noise = tk.DoubleVar(value=0.05)
+        self.bits  = tk.IntVar(value=16)
+
+        ttk.Label(left, text="Noise Level (added on top)").pack(anchor="w", pady=(6, 0))
+        ttk.Spinbox(left, from_=0, to=1, increment=0.05, textvariable=self.noise).pack(fill="x")
+
+        ttk.Label(left, text="Quantization Levels").pack(anchor="w", pady=(6, 0))
         ttk.Combobox(left, values=[4, 8, 16, 32, 64], textvariable=self.bits, state="readonly").pack(fill="x")
 
-        ttk.Button(left, text="Run Audio Compression", command=self.run).pack(fill="x", pady=10)
+        ttk.Separator(left, orient="horizontal").pack(fill="x", pady=8)
+
+        ttk.Button(left, text="▶  Run Audio Compression", command=self.run).pack(fill="x", pady=4)
 
         self.progress = ttk.Progressbar(left, maximum=100)
         self.progress.pack(fill="x")
 
-        self.log = tk.Text(left, height=12, width=35)
-        self.log.pack(fill="both", expand=True, pady=10)
+        self.log_box = tk.Text(left, height=12, width=35, font=("Courier", 9))
+        self.log_box.pack(fill="both", expand=True, pady=10)
+
+    # ── helpers ─────────────────────────────────────
+    def _toggle_source(self):
+        state = "normal" if self.use_file.get() else "disabled"
+        self.file_entry.config(state=state)
+        self.browse_btn.config(state=state)
+        # Dim synthetic controls when file mode is on
+        dim = "disabled" if self.use_file.get() else "normal"
+        self.freq_spin.config(state=dim)
+        self.dur_spin.config(state=dim)
+
+    def _pick_file(self):
+        path = filedialog.askopenfilename(
+            title="Select Audio File",
+            filetypes=[("Audio Files", "*.wav *.wave *.mp3"), ("WAV", "*.wav"), ("MP3", "*.mp3")],
+        )
+        if path:
+            self.audio_file.set(path)
+            self.log_message(f"Loaded: {os.path.basename(path)}")
 
     def log_message(self, message):
-        self.log.insert("end", message + "\n")
-        self.log.see("end")
+        self.log_box.insert("end", message + "\n")
+        self.log_box.see("end")
 
     def update_progress(self, value):
         self.progress["value"] = value
 
     def run(self):
+        audio_file = ""
+        if self.use_file.get():
+            audio_file = self.audio_file.get().strip()
+            if not audio_file or not os.path.exists(audio_file):
+                messagebox.showerror("File Not Found", "Please select a valid WAV or MP3 file.")
+                return
+
         params = {
+            "audio_file": audio_file,          # ← NEW
             "frequency":  self.frequency.get(),
             "noise":      self.noise.get(),
             "duration":   self.duration.get(),
             "q_levels":   self.bits.get(),
             "output_dir": "outputs",
         }
-
         run_async(
             run_audio, params,
             self.log_message, self.update_progress, self.finished,
@@ -112,25 +177,59 @@ class AudioTab(ttk.Frame):
         )
 
     def finished(self, data):
+        # ── Waveforms ────────────────────────────────
         fig1, axs = plt.subplots(3, 1, figsize=(8, 6))
-        axs[0].plot(data["time_axis"], data["clean_signal"])
-        axs[0].set_title("Clean Signal")
-        axs[1].plot(data["time_axis"], data["noisy_signal"])
-        axs[1].set_title("Noisy Signal")
-        axs[2].plot(data["time_axis"], data["decoded_signal"])
-        axs[2].set_title("Decoded Signal")
+        axs[0].plot(data["time_axis"], data["clean_signal"],   color="#2196F3")
+        axs[0].set_title(f"Clean Signal  [{data.get('source_label', '')}]")
+        axs[1].plot(data["time_axis"], data["noisy_signal"],   color="#F44336")
+        axs[1].set_title("Noisy Signal (with silence appended)")
+        axs[2].plot(data["time_axis"], data["decoded_signal"], color="#4CAF50")
+        axs[2].set_title("Decoded (Decompressed) Signal")
+        for ax in axs:
+            ax.set_ylabel("Amplitude")
+        axs[2].set_xlabel("Time (s)")
         fig1.tight_layout()
         draw_figure(self.wave_tab, fig1)
 
-        fig2, ax = plt.subplots(figsize=(8, 5))
-        ax.imshow(data["magnitudes"], aspect="auto", origin="lower")
-        ax.set_title("STFT Magnitudes")
+        # ── Zoomed differences ────────────────────────
+        zoom_path = os.path.join("outputs", "zoomed_comparison.png")
+        if os.path.exists(zoom_path):
+            img = plt.imread(zoom_path)
+            fig_z, ax_z = plt.subplots(figsize=(10, 8))
+            ax_z.imshow(img)
+            ax_z.axis("off")
+            draw_figure(self.zoom_tab, fig_z)
+
+        # ── Spectrogram ───────────────────────────────
+        fig2, axes2 = plt.subplots(1, 2, figsize=(10, 4))
+        freq_ticks  = data.get("freq_ticks", [])
+        freq_labels = data.get("freq_labels", [])
+        max_hz      = data.get("max_hz", 8000)
+
+        axes2[0].imshow(data["magnitudes"], aspect="auto", origin="lower", cmap="inferno")
+        axes2[0].set_title(f"STFT Magnitudes (0–{max_hz}Hz, log scale)")
+        axes2[0].set_xlabel("Time frame")
+        axes2[0].set_ylabel("Frequency (Hz)")
+        if len(freq_ticks):
+            axes2[0].set_yticks(freq_ticks)
+            axes2[0].set_yticklabels(freq_labels)
+
+        axes2[1].imshow(data["quantized"], aspect="auto", origin="lower", cmap="inferno")
+        axes2[1].set_title("Quantized Magnitudes")
+        axes2[1].set_xlabel("Time frame")
+        axes2[1].set_ylabel("Frequency (Hz)")
+        if len(freq_ticks):
+            axes2[1].set_yticks(freq_ticks)
+            axes2[1].set_yticklabels(freq_labels)
+
+        fig2.tight_layout()
         draw_figure(self.spec_tab, fig2)
 
+        # ── Statistics ────────────────────────────────
         for widget in self.stats_tab.winfo_children():
             widget.destroy()
-
         for s in [
+            f"Source: {data.get('source_label', 'N/A')}",
             f"SNR: {data['snr']} dB",
             f"Compression Ratio: {data['compression_ratio']} : 1",
             f"RLE Pairs: {data['rle_pairs']}",
@@ -139,11 +238,12 @@ class AudioTab(ttk.Frame):
 
 
 # ───────────────────────────────────────────
-# VIDEO TAB
+# VIDEO TAB  (unchanged)
 # ───────────────────────────────────────────
 class VideoTab(ttk.Frame):
     def __init__(self, parent):
         super().__init__(parent)
+        self.recon_video_path = None
         self.build_ui()
 
     def build_ui(self):
@@ -184,17 +284,16 @@ class VideoTab(ttk.Frame):
         ttk.Spinbox(left, from_=2, to=32, textvariable=self.search_area).pack(fill="x")
 
         ttk.Button(left, text="Run Video Compression", command=self.run).pack(fill="x", pady=10)
+        ttk.Button(left, text="▶ Play Before/After Video", command=self.play_comparison).pack(fill="x", pady=5)
 
         self.progress = ttk.Progressbar(left, maximum=100)
-        self.progress.pack(fill="x")
+        self.progress.pack(fill="x", pady=5)
 
         self.log = tk.Text(left, height=12, width=35)
         self.log.pack(fill="both", expand=True, pady=10)
 
     def pick_video(self):
-        path = filedialog.askopenfilename(
-            filetypes=[("Video Files", "*.mp4 *.avi *.mov")]
-        )
+        path = filedialog.askopenfilename(filetypes=[("Video Files", "*.mp4 *.avi *.mov")])
         if path:
             self.video_path.set(path)
             self.log_message(f"Loaded: {os.path.basename(path)}")
@@ -210,7 +309,6 @@ class VideoTab(ttk.Frame):
         if not os.path.exists(self.video_path.get()):
             self.log_message("Please select a valid video.")
             return
-
         params = {
             "video_path":  self.video_path.get(),
             "max_frames":  self.max_frames.get(),
@@ -219,15 +317,40 @@ class VideoTab(ttk.Frame):
             "search_area": self.search_area.get(),
             "output_dir":  "outputs",
         }
+        run_async(run_video, params, self.log_message, self.update_progress, self.finished, self.winfo_toplevel())
 
-        run_async(
-            run_video, params,
-            self.log_message, self.update_progress, self.finished,
-            self.winfo_toplevel(),
-        )
+    def play_comparison(self):
+        orig_path = self.video_path.get()
+        if not orig_path or not self.recon_video_path or not os.path.exists(self.recon_video_path):
+            self.log_message("No reconstructed video available. Run compression first.")
+            return
+        threading.Thread(target=self._play_side_by_side, args=(orig_path, self.recon_video_path), daemon=True).start()
+
+    def _play_side_by_side(self, orig_path, recon_path):
+        cap_orig  = cv2.VideoCapture(orig_path)
+        cap_recon = cv2.VideoCapture(recon_path)
+        while True:
+            ret1, frame1 = cap_orig.read()
+            ret2, frame2 = cap_recon.read()
+            if not ret1 or not ret2:
+                break
+            h1, w1 = frame1.shape[:2]
+            h2, w2 = frame2.shape[:2]
+            if h1 != h2 or w1 != w2:
+                frame1 = cv2.resize(frame1, (w2, h2))
+            cv2.putText(frame1, "Original",                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+            cv2.putText(frame2, "Reconstructed (Full YUV)",   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
+            combined = np.hstack((frame1, frame2))
+            cv2.imshow("Compression Comparison - Press 'Q' to Exit", combined)
+            if cv2.waitKey(30) & 0xFF == ord('q'):
+                break
+        cap_orig.release()
+        cap_recon.release()
+        cv2.destroyWindow("Compression Comparison - Press 'Q' to Exit")
 
     def finished(self, data, summary):
-        # ── PSNR chart ──────────────────────────────
+        self.recon_video_path = data.get("recon_video_path")
+
         fig1, ax1 = plt.subplots(figsize=(8, 5))
         ax1.plot(data["psnr_values"])
         ax1.set_title("PSNR Per Frame")
@@ -235,7 +358,6 @@ class VideoTab(ttk.Frame):
         ax1.set_ylabel("PSNR (dB)")
         draw_figure(self.psnr_tab, fig1)
 
-        # ── Frame type chart ────────────────────────
         fig2, ax2 = plt.subplots(figsize=(8, 3))
         frame_values = [1 if f == "I" else 0 for f in data["frame_types"]]
         ax2.step(range(len(frame_values)), frame_values, where="mid")
@@ -244,7 +366,6 @@ class VideoTab(ttk.Frame):
         ax2.set_title("Frame Types")
         draw_figure(self.frame_tab, fig2)
 
-        # ── Frame comparison (original vs reconstructed) ──
         pairs = data["frame_pairs"]
         n     = len(pairs)
         if n > 0:
@@ -252,20 +373,18 @@ class VideoTab(ttk.Frame):
             if n == 1:
                 axes = np.expand_dims(axes, axis=1)
             for col, (orig, recon) in enumerate(pairs):
-                axes[0, col].imshow(orig,  cmap="gray", vmin=0, vmax=255)
+                axes[0, col].imshow(orig)
                 axes[0, col].set_title(f"Original #{col}", fontsize=8)
                 axes[0, col].axis("off")
-                axes[1, col].imshow(recon, cmap="gray", vmin=0, vmax=255)
-                axes[1, col].set_title(f"Recon #{col}",   fontsize=8)
+                axes[1, col].imshow(recon)
+                axes[1, col].set_title(f"Recon #{col}", fontsize=8)
                 axes[1, col].axis("off")
-            fig3.suptitle("Original vs Reconstructed Frames (Y channel)")
+            fig3.suptitle("Original vs Reconstructed Frames")
             fig3.tight_layout()
             draw_figure(self.compare_tab, fig3)
 
-        # ── Statistics ──────────────────────────────
         for widget in self.stats_tab.winfo_children():
             widget.destroy()
-
         for s in [
             f"Average PSNR: {summary['avg_psnr']:.2f} dB",
             f"Compression Ratio: {summary['ratio']} : 1",
@@ -281,7 +400,6 @@ class VideoTab(ttk.Frame):
 class App(tk.Tk):
     def __init__(self):
         super().__init__()
-
         self.title("Multimedia Compression Studio")
         self.geometry("1200x700")
 
