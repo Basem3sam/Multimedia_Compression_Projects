@@ -123,9 +123,14 @@ def run_pipeline(params, log, progress, done):
         source_label       = f"Synthetic {frequency}Hz"
 
     progress(10)
+    
+    def normalize(arr):
+        peak = np.max(np.abs(arr))
+        return arr / peak * 0.891
 
     # ── helper: float32 [-1,1] → int16 for universal WAV compatibility ──
     def to_int16(arr):
+        arr = normalize(arr)
         arr = np.clip(arr, -1.0, 1.0)
         return (arr * 32767).astype(np.int16)
 
