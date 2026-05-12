@@ -1,5 +1,5 @@
 __pycache__/
 *.pyc
 
-Audio_Compression\DSP_Project.wav
+Audio_Compression/DSP_Project.wav
 outputs/
