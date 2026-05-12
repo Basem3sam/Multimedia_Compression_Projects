@@ -108,18 +108,18 @@ multimedia-compression-studio/
 ## 🏗 System Architecture
 
 ```
-┌─────────────────────────────────────────────────┐
-│               main.py  (Tkinter GUI)             │
-│  ┌──────────────────┐   ┌──────────────────────┐ │
-│  │    AudioTab      │   │      VideoTab        │ │
-│  │  (left: config)  │   │  (left: config)      │ │
-│  │  (right: charts) │   │  (right: charts)     │ │
-│  └────────┬─────────┘   └──────────┬───────────┘ │
-│           │ run_async()            │ run_async()  │
-└───────────┼────────────────────────┼─────────────┘
-            │  daemon thread         │  daemon thread
-            ▼                        ▼
-┌─────────────────────┐   ┌──────────────────────────┐
+┌────────────────────────────────────────────────────┐
+│               main.py  (Tkinter GUI)               │
+│  ┌────────────────────┐   ┌─────────────────────┐  │
+│  │     AudioTab       │   │      VideoTab       │  │
+│  │   (left: config)   │   │   (left: config)    │  │
+│  │   (right: charts)  │   │   (right: charts)   │  │
+│  └─────────┬──────────┘   └──────────┬──────────┘  │
+│           │ run_async()              │ run_async() │
+└───────────┼──────────────────────────┼─────────────┘
+            │  daemon thread           │  daemon thread
+            ▼                          ▼
+┌─────────────────────┐   ┌───────────────────────────┐
 │  audio_encoder.py   │   │    video_encoder.py       │
 │                     │   │                           │
 │  1. Load / Generate │   │  1. Read frames (OpenCV)  │
@@ -129,7 +129,7 @@ multimedia-compression-studio/
 │  5. RLE             │   │  5. Motion Estimation     │
 │  6. iSTFT → WAV     │   │  6. Huffman Coding        │
 │  7. SNR / Plots     │   │  7. Bitstream + PSNR      │
-└─────────────────────┘   └──────────────────────────┘
+└─────────────────────┘   └───────────────────────────┘
 ```
 
 ---
